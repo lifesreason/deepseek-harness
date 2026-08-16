@@ -1,0 +1,63 @@
+name: Build and Push Docker Image to GHCR
+
+on:
+  push:
+    branches: [ "master", "main" ]  # 监听主分支的推送
+  workflow_dispatch:                # 支持在 Actions 页面手动触发
+
+env:
+  REGISTRY: ghcr.io
+  # 镜像名称格式：ghcr.io/你的用户名/仓库名
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    # 关键权限：允许向 GitHub Container Registry 推送
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      # 1. 检出代码
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. 设置 Docker Buildx（支持多平台构建）
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 3. 登录到 GitHub Container Registry
+      # 使用 GITHUB_TOKEN 认证，无需额外配置 Secrets
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 4. 生成镜像元数据（标签、标签）
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # 主分支推送时打 latest 标签
+            type=raw,value=latest,enable={{is_default_branch}}
+            # 每次构建都打一个短 commit SHA 标签，方便追溯
+            type=sha,prefix=,suffix=,format=short
+
+      # 5. 构建并推送镜像（核心步骤）
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          # 指定 Dockerfile 路径（如果在根目录）
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # 启用 GitHub Actions 缓存，加速后续构建
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
